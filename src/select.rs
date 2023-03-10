@@ -1,164 +1,261 @@
-use crate::where_clause::WhereClauses;
-use crate::SqlBuilder;
+use crate::error::Error;
+use crate::Result;
+use crate::{where_clause::WhereClause, SqlBuilder};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SelectQuery {
     table: &'static str,
     columns: Vec<&'static str>,
-    where_clause: WhereClauses,
-    order_by: Option<OrderBy>,
+    where_clause: Option<WhereClause>,
     limit: Option<usize>,
     offset: Option<usize>,
+    order_by: Vec<OrderBy>,
 }
 
 impl SelectQuery {
     pub fn new(table: &'static str) -> Self {
-        SelectQuery {
+        Self {
             table,
-            columns: vec![],
-            where_clause: WhereClauses::new(),
-            ..Default::default()
+            columns: Vec::new(),
+            where_clause: None,
+            limit: None,
+            offset: None,
+            order_by: Vec::new(),
         }
     }
 
-    pub fn add_column(&mut self, column: &'static str) {
+    pub fn add_column(&mut self, column: &'static str) -> &mut Self {
         self.columns.push(column);
+        self
     }
 
-    pub fn add_columns(&mut self, columns: Vec<&'static str>) {
+    pub fn add_columns(&mut self, columns: &[&'static str]) -> &mut Self {
         self.columns.extend(columns);
+        self
     }
 
-    pub fn add_where_clause(&mut self, where_clause: WhereClauses) {
-        self.where_clause = where_clause;
+    pub fn where_clause(&mut self, where_clause: WhereClause) -> &mut Self {
+        self.where_clause = Some(where_clause);
+        self
     }
 
-    pub fn add_order_by(&mut self, order_by: OrderBy) {
-        self.order_by = Some(order_by);
-    }
-
-    pub fn add_limit(&mut self, limit: usize) {
+    pub fn limit(&mut self, limit: usize) -> &mut Self {
         self.limit = Some(limit);
+        self
     }
 
-    pub fn add_offset(&mut self, offset: usize) {
+    pub fn offset(&mut self, offset: usize) -> &mut Self {
         self.offset = Some(offset);
+        self
+    }
+
+    pub fn order_by(&mut self, column: &'static str) -> &mut Self {
+        self.order_by.push(OrderBy::new(column));
+        self
+    }
+
+    pub fn order_by_columns(&mut self, columns: &[&'static str]) -> &mut Self {
+        self.order_by.push(OrderBy::from_columns(columns));
+        self
+    }
+
+    pub fn desc(&mut self) -> Result<&mut Self> {
+        if self.order_by.is_empty() {
+            return Err(Error::NoOrderByClause);
+        }
+        self.order_by.last_mut().unwrap().desc();
+        Ok(self)
+    }
+
+    pub fn asc(&mut self) -> Result<&mut Self> {
+        if self.order_by.is_empty() {
+            return Err(Error::NoOrderByClause);
+        }
+        self.order_by.last_mut().unwrap().asc();
+        Ok(self)
     }
 }
 
 impl SqlBuilder for SelectQuery {
-    fn build(&self) -> String {
-        let mut sql = format!(
-            "SELECT {} FROM {}",
-            if self.columns.is_empty() {
-                "*".to_string()
-            } else {
-                self.columns.join(", ")
-            },
-            self.table
-        );
-
-        if !self.where_clause.is_empty() {
-            sql.push_str(&format!(" WHERE {}", self.where_clause.build()));
+    fn build(&self) -> Result<String> {
+        let mut sql = String::new();
+        sql.push_str("SELECT ");
+        if self.columns.is_empty() {
+            sql.push_str("*");
+        } else {
+            sql.push_str(&self.columns.join(", "));
         }
-
-        if let Some(order_by) = &self.order_by {
-            sql.push_str(&format!(" ORDER BY {}", order_by.build()));
+        sql.push_str(" FROM ");
+        sql.push_str(self.table);
+        if let Some(where_clause) = &self.where_clause {
+            sql.push_str(" WHERE ");
+            sql.push_str(&where_clause.build()?);
         }
-
+        if !self.order_by.is_empty() {
+            sql.push_str(" ORDER BY ");
+            sql.push_str(
+                &self
+                    .order_by
+                    .iter()
+                    .map(|o| o.build())
+                    .collect::<Result<Vec<String>>>()?
+                    .join(", "),
+            );
+        }
         if let Some(limit) = self.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(" LIMIT ");
+            sql.push_str(&limit.to_string());
         }
-
         if let Some(offset) = self.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(" OFFSET ");
+            sql.push_str(&offset.to_string());
         }
-
-        sql
+        Ok(sql)
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct OrderBy {
-    pub columns: Vec<&'static str>,
-    pub order: Order,
-}
-
-impl OrderBy {
-    pub fn desc(&mut self) {
-        self.order = Order::Desc;
-    }
-
-    pub fn asc(&mut self) {
-        self.order = Order::Asc;
-    }
-}
-
-impl SqlBuilder for OrderBy {
-    fn build(&self) -> String {
-        format!("{} {}", self.columns.join(", "), self.order.build())
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub enum Order {
-    #[default]
+enum Order {
     Asc,
     Desc,
 }
 
-impl SqlBuilder for Order {
-    fn build(&self) -> String {
-        match self {
-            Order::Asc => "ASC".to_string(),
-            Order::Desc => "DESC".to_string(),
+#[derive(Debug, Clone)]
+struct OrderBy {
+    columns: Vec<&'static str>,
+    order: Order,
+}
+
+impl OrderBy {
+    pub fn new(column: &'static str) -> Self {
+        Self {
+            columns: vec![column],
+            order: Order::Asc,
         }
+    }
+    pub fn from_columns(columns: &[&'static str]) -> Self {
+        Self {
+            columns: columns.to_vec(),
+            order: Order::Asc,
+        }
+    }
+
+    pub fn asc(&mut self) -> &mut Self {
+        self.order = Order::Asc;
+        self
+    }
+
+    pub fn desc(&mut self) -> &mut Self {
+        self.order = Order::Desc;
+        self
+    }
+}
+
+impl SqlBuilder for OrderBy {
+    fn build(&self) -> Result<String> {
+        Ok(format!(
+            "{} {}",
+            self.columns.join(", "),
+            match self.order {
+                Order::Asc => "ASC",
+                Order::Desc => "DESC",
+            }
+        ))
     }
 }
 
 #[cfg(test)]
 mod test {
+    use super::*;
+    use crate::where_clause::WhereClause;
+
     #[test]
-    fn test_order_by() {
-        use super::*;
-
-        let mut order_by = OrderBy {
-            columns: vec!["id", "name"],
-            order: Order::Asc,
-        };
-
-        assert_eq!(order_by.build(), "id, name ASC");
-
-        order_by.desc();
-        assert_eq!(order_by.build(), "id, name DESC");
+    fn test_basic_select() {
+        let mut select = SelectQuery::new("users");
+        select.add_column("id");
+        let sql = select.build().unwrap();
+        assert_eq!(sql, "SELECT id FROM users");
     }
 
     #[test]
-    fn test_select_query() {
-        use super::*;
+    fn test_select_all() {
+        let select = SelectQuery::new("users");
+        let sql = select.build().unwrap();
+        assert_eq!(sql, "SELECT * FROM users");
+    }
 
-        let mut select_query = SelectQuery::new("users");
-        assert_eq!(select_query.build(), "SELECT * FROM users");
-        select_query.add_column("id");
-        select_query.add_column("name");
-        assert_eq!(select_query.build(), "SELECT id, name FROM users");
-        let mut where_clause = WhereClauses::new();
-        where_clause.and_eq("id");
-        select_query.add_where_clause(where_clause);
+    #[test]
+    fn test_select() {
+        let mut select = SelectQuery::new("users");
+        select
+            .add_column("id")
+            .add_column("name")
+            .add_column("email")
+            .where_clause(WhereClause::equals("id", 1))
+            .order_by("id")
+            .desc()
+            .unwrap()
+            .limit(10)
+            .offset(5);
+        let sql = select.build().unwrap();
         assert_eq!(
-            select_query.build(),
-            "SELECT id, name FROM users WHERE id = ?"
+            sql,
+            "SELECT id, name, email FROM users WHERE id = 1 ORDER BY id DESC LIMIT 10 OFFSET 5"
         );
-        select_query.add_order_by(OrderBy {
-            columns: vec!["id", "name"],
-            order: Order::Asc,
-        });
-        select_query.add_limit(10);
-        select_query.add_offset(20);
+    }
 
+    #[test]
+    fn test_select_no_order_by() {
+        let mut select = SelectQuery::new("users");
+        select
+            .add_column("id")
+            .add_column("name")
+            .add_column("email")
+            .where_clause(WhereClause::equals("id", 1))
+            .limit(10)
+            .offset(5);
+        let sql = select.build().unwrap();
         assert_eq!(
-            select_query.build(),
-            "SELECT id, name FROM users WHERE id = ? ORDER BY id, name ASC LIMIT 10 OFFSET 20"
+            sql,
+            "SELECT id, name, email FROM users WHERE id = 1 LIMIT 10 OFFSET 5"
+        );
+    }
+
+    #[test]
+    fn test_select_no_where_clause() {
+        let mut select = SelectQuery::new("users");
+        select
+            .add_column("id")
+            .add_column("name")
+            .add_column("email")
+            .order_by("id")
+            .desc()
+            .unwrap()
+            .limit(10)
+            .offset(5);
+        let sql = select.build().unwrap();
+        assert_eq!(
+            sql,
+            "SELECT id, name, email FROM users ORDER BY id DESC LIMIT 10 OFFSET 5"
+        );
+    }
+
+    #[test]
+    fn test_select_no_limit() {
+        let mut select = SelectQuery::new("users");
+        select
+            .add_column("id")
+            .add_column("name")
+            .add_column("email")
+            .where_clause(WhereClause::equals("id", 1))
+            .order_by("id")
+            .desc()
+            .unwrap()
+            .offset(5);
+        let sql = select.build().unwrap();
+        assert_eq!(
+            sql,
+            "SELECT id, name, email FROM users WHERE id = 1 ORDER BY id DESC OFFSET 5"
         );
     }
 }

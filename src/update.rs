@@ -1,66 +1,92 @@
-use crate::where_clause::WhereClauses;
-use crate::SqlBuilder;
+use crate::Result;
+use crate::{repr::ToSqlRepr, where_clause::WhereClause, SqlBuilder};
 
+#[derive(Debug, Clone)]
 pub struct UpdateQuery {
     pub table: &'static str,
-    pub columns: Vec<&'static str>,
-    pub where_clause: WhereClauses,
+    pub fields: Vec<(&'static str, String)>,
+    pub where_clause: Option<WhereClause>,
 }
 
 impl UpdateQuery {
     pub fn new(table: &'static str) -> Self {
-        UpdateQuery {
+        Self {
             table,
-            columns: vec![],
-            where_clause: WhereClauses::new(),
+            fields: Vec::new(),
+            where_clause: None,
         }
     }
 
-    pub fn add_column(&mut self, column: &'static str) {
-        self.columns.push(column);
+    pub fn set_field<T: ToSqlRepr>(&mut self, field: &'static str, value: &T) -> &mut Self {
+        self.fields.push((field, value.to_sql_repr()));
+        self
     }
 
-    pub fn add_columns(&mut self, columns: Vec<&'static str>) {
-        self.columns.extend(columns);
+    pub fn add_where_clause(&mut self, where_clause: WhereClause) -> &mut Self {
+        self.where_clause = Some(where_clause);
+        self
     }
 }
 
 impl SqlBuilder for UpdateQuery {
-    fn build(&self) -> String {
-        let mut sql = String::from("UPDATE ");
-        sql.push_str(self.table);
-        sql.push_str(" SET ");
-        sql.push_str(
-            &self
-                .columns
-                .iter()
-                .map(|c| format!("{} = ?", c))
-                .collect::<Vec<String>>()
-                .join(", "),
-        );
-        if self.where_clause.is_empty() {
-            return sql;
+    fn build(&self) -> Result<String> {
+        if self.fields.is_empty() {
+            return Err(crate::error::Error::NoUpdateFields);
         }
-        sql.push_str(" WHERE ");
-        sql.push_str(&self.where_clause.build());
-        sql
+
+        let fields = self
+            .fields
+            .iter()
+            .map(|(field, value)| format!("{} = {}", field, value))
+            .collect::<Vec<String>>()
+            .join(", ");
+        if let Some(where_clause) = &self.where_clause {
+            Ok(format!(
+                "UPDATE {} SET {} WHERE {}",
+                self.table,
+                fields,
+                where_clause.build()?
+            ))
+        } else {
+            Err(crate::error::Error::NoUpdateConditions)
+        }
     }
 }
 
 #[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::where_clause::WhereClause;
 
-mod test {
     #[test]
-    fn test_update() {
-        use super::*;
-        let mut update = UpdateQuery::new("users");
-        update.add_column("name");
-        update.add_column("email");
-        assert_eq!(update.build(), "UPDATE users SET name = ?, email = ?");
-        update.where_clause.and_eq("id");
+    fn test_update_query() {
+        let mut update_query = UpdateQuery::new("users");
+        update_query
+            .set_field("name", &"John")
+            .set_field("age", &30)
+            .add_where_clause(WhereClause::equals("id", 1));
         assert_eq!(
-            update.build(),
-            "UPDATE users SET name = ?, email = ? WHERE id = ?"
+            update_query.build().unwrap(),
+            "UPDATE users SET name = 'John', age = 30 WHERE id = 1"
+        );
+    }
+
+    #[test]
+    fn test_update_query_no_fields() {
+        let update_query = UpdateQuery::new("users");
+        assert_eq!(
+            update_query.build().unwrap_err(),
+            crate::error::Error::NoUpdateFields
+        );
+    }
+
+    #[test]
+    fn test_update_query_no_conditions() {
+        let mut update_query = UpdateQuery::new("users");
+        update_query.set_field("name", &"John");
+        assert_eq!(
+            update_query.build().unwrap_err(),
+            crate::error::Error::NoUpdateConditions
         );
     }
 }
