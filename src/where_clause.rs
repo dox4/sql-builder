@@ -62,7 +62,7 @@ impl WhereClause {
         WhereClause::Condition(WhereCondition::NotLike(field, value.to_sql_repr()))
     }
 
-    pub fn in_<T: ToSqlRepr>(field: &'static str, values: Vec<T>) -> WhereClause {
+    pub fn in_<T: ToSqlRepr>(field: &'static str, values: &Vec<T>) -> WhereClause {
         WhereClause::Condition(WhereCondition::In(
             field,
             values.into_iter().map(|v| v.to_sql_repr()).collect(),
@@ -102,6 +102,10 @@ impl WhereClause {
 
     pub fn raw_condition(condition: String) -> WhereClause {
         WhereClause::Condition(WhereCondition::RawCondition(condition))
+    }
+
+    pub fn contains(field: &'static str, value: String) -> WhereClause {
+        Self::like(field, format!("%{}%", value))
     }
 
     pub fn and(self, other: WhereClause) -> WhereClause {
@@ -265,6 +269,10 @@ impl WhereClause {
         )
     }
 
+    pub fn and_contains(self, field: &'static str, value: String) -> WhereClause {
+        WhereClause::And(Box::new(self), Box::new(Self::contains(field, value)))
+    }
+
     pub fn or_equals<T: ToSqlRepr>(self, field: &'static str, value: T) -> WhereClause {
         WhereClause::Or(
             Box::new(self),
@@ -416,6 +424,10 @@ impl WhereClause {
                 condition,
             ))),
         )
+    }
+
+    pub fn or_contains(self, field: &'static str, value: String) -> WhereClause {
+        WhereClause::Or(Box::new(self), Box::new(Self::contains(field, value)))
     }
 }
 
@@ -576,5 +588,37 @@ mod test {
             "name = 'Jack' AND age = 18 AND id = 1"
         );
         assert_eq!(user.name, "Jack");
+    }
+
+    #[test]
+    fn test_like() {
+        let where_clause = WhereClause::like("name", "Bob".to_string());
+        assert_eq!(where_clause.build().unwrap(), "name LIKE 'Bob'");
+    }
+
+    #[test]
+    fn test_contains() {
+        let where_clause = WhereClause::contains("name", "Jack".to_string());
+        assert_eq!(where_clause.build().unwrap(), "name LIKE '%Jack%'");
+    }
+
+    #[test]
+    fn test_and_contains() {
+        let where_clause =
+            WhereClause::equals("name", "Jack").and_contains("name", "Jack".to_string());
+        assert_eq!(
+            where_clause.build().unwrap(),
+            "name = 'Jack' AND name LIKE '%Jack%'"
+        );
+    }
+
+    #[test]
+    fn test_or_cantains() {
+        let where_clause =
+            WhereClause::equals("name", "Jack").or_contains("name", "Jack".to_string());
+        assert_eq!(
+            where_clause.build().unwrap(),
+            "name = 'Jack' OR name LIKE '%Jack%'"
+        );
     }
 }

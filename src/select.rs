@@ -7,8 +7,8 @@ pub struct SelectQuery {
     table: &'static str,
     columns: Vec<&'static str>,
     where_clause: Option<WhereClause>,
-    limit: Option<usize>,
-    offset: Option<usize>,
+    limit: Option<u64>,
+    offset: Option<u64>,
     order_by: Vec<OrderBy>,
 }
 
@@ -39,12 +39,12 @@ impl SelectQuery {
         self
     }
 
-    pub fn limit(&mut self, limit: usize) -> &mut Self {
+    pub fn limit(&mut self, limit: u64) -> &mut Self {
         self.limit = Some(limit);
         self
     }
 
-    pub fn offset(&mut self, offset: usize) -> &mut Self {
+    pub fn offset(&mut self, offset: u64) -> &mut Self {
         self.offset = Some(offset);
         self
     }
@@ -73,6 +73,12 @@ impl SelectQuery {
         }
         self.order_by.last_mut().unwrap().asc();
         Ok(self)
+    }
+
+    pub fn count(&mut self) -> &mut Self {
+        self.columns.clear();
+        self.columns.push("COUNT(*)");
+        self
     }
 }
 
