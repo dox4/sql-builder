@@ -1,10 +1,10 @@
-use crate::where_clause::WhereClauses;
+use crate::where_clause::WhereClause;
 use crate::SqlBuilder;
 
 pub struct UpdateQuery {
     pub table: &'static str,
     pub columns: Vec<&'static str>,
-    pub where_clause: WhereClauses,
+    pub where_clause: Option<WhereClause>,
 }
 
 impl UpdateQuery {
@@ -12,38 +12,49 @@ impl UpdateQuery {
         UpdateQuery {
             table,
             columns: vec![],
-            where_clause: WhereClauses::new(),
+            where_clause: None,
         }
     }
 
-    pub fn add_column(&mut self, column: &'static str) {
+    pub fn add_column(&mut self, column: &'static str) -> &mut Self {
         self.columns.push(column);
+        self
     }
 
-    pub fn add_columns(&mut self, columns: Vec<&'static str>) {
+    pub fn add_columns(&mut self, columns: Vec<&'static str>) -> &mut Self {
         self.columns.extend(columns);
+        self
+    }
+
+    pub fn where_clause(&mut self, where_clause: WhereClause) -> &mut Self {
+        self.where_clause = Some(where_clause);
+        self
     }
 }
 
 impl SqlBuilder for UpdateQuery {
     fn build(&self) -> String {
-        let mut sql = String::from("UPDATE ");
-        sql.push_str(self.table);
-        sql.push_str(" SET ");
-        sql.push_str(
-            &self
-                .columns
-                .iter()
-                .map(|c| format!("{} = ?", c))
-                .collect::<Vec<String>>()
-                .join(", "),
-        );
-        if self.where_clause.is_empty() {
-            return sql;
+        if self.columns.is_empty() {
+            panic!("No columns specified for update query");
         }
-        sql.push_str(" WHERE ");
-        sql.push_str(&self.where_clause.build());
-        sql
+        let updated_columns = self
+            .columns
+            .iter()
+            .map(|c| format!("{} = ?", c))
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        match self.where_clause {
+            Some(ref where_clause) => {
+                format!(
+                    "UPDATE {} SET {} WHERE {}",
+                    self.table,
+                    updated_columns,
+                    where_clause.build()
+                )
+            }
+            None => format!("UPDATE {} SET {}", self.table, updated_columns),
+        }
     }
 }
 
@@ -54,10 +65,9 @@ mod test {
     fn test_update() {
         use super::*;
         let mut update = UpdateQuery::new("users");
-        update.add_column("name");
-        update.add_column("email");
+        update.add_column("name").add_column("email");
         assert_eq!(update.build(), "UPDATE users SET name = ?, email = ?");
-        update.where_clause.and_eq("id");
+        update.where_clause(WhereClause::equal("id"));
         assert_eq!(
             update.build(),
             "UPDATE users SET name = ?, email = ? WHERE id = ?"
