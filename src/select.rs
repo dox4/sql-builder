@@ -7,8 +7,8 @@ pub struct SelectQuery {
     columns: Vec<&'static str>,
     where_clause: Option<WhereClause>,
     order_by: Vec<OrderBy>,
-    limit: Option<usize>,
-    offset: Option<usize>,
+    limit: Option<u64>,
+    offset: Option<u64>,
 }
 
 impl SelectQuery {
@@ -25,12 +25,12 @@ impl SelectQuery {
         self
     }
 
-    pub fn add_columns(&mut self, columns: Vec<&'static str>) -> &mut Self {
+    pub fn add_columns(&mut self, columns: &[&'static str]) -> &mut Self {
         self.columns.extend(columns);
         self
     }
 
-    pub fn where_clause(&mut self, where_clause: WhereClause) -> &mut Self {
+    pub fn add_where_clause(&mut self, where_clause: WhereClause) -> &mut Self {
         self.where_clause = Some(where_clause);
         self
     }
@@ -55,13 +55,26 @@ impl SelectQuery {
         self
     }
 
-    pub fn limit(&mut self, limit: usize) -> &mut Self {
+    pub fn limit(&mut self, limit: u64) -> &mut Self {
         self.limit = Some(limit);
         self
     }
 
-    pub fn offset(&mut self, offset: usize) -> &mut Self {
+    pub fn offset(&mut self, offset: u64) -> &mut Self {
         self.offset = Some(offset);
+        self
+    }
+
+    pub fn count(&mut self) -> &mut Self {
+        if !self.columns.is_empty() {
+            panic!("Cannot call count() after add_column() or add_columns()");
+        }
+        self.columns.push("COUNT(*)");
+        self
+    }
+
+    pub fn clear_cloumns(&mut self) -> &mut Self {
+        self.columns.clear();
         self
     }
 }
@@ -186,7 +199,7 @@ mod test {
         select_query.add_column("id").add_column("name");
         assert_eq!(select_query.build(), "SELECT id, name FROM users");
         let where_clause = WhereClause::equal("id");
-        select_query.where_clause(where_clause);
+        select_query.add_where_clause(where_clause);
         assert_eq!(
             select_query.build(),
             "SELECT id, name FROM users WHERE id = ?"
